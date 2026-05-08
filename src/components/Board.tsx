@@ -26,6 +26,37 @@ function isRearCell(row: number, col: number): boolean {
          (leftOrRight && (nearTopRow || nearBottomRow));
 }
 
+function drawWalls(ctx: CanvasRenderingContext2D) {
+  const px = (col: number) => LABEL + col * CELL + 0.5;
+  const py = (row: number) => LABEL + row * CELL + 0.5;
+  const line = (x1: number, y1: number, x2: number, y2: number) => {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  };
+
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'square';
+
+  // Top-left block (rows 7-8, cols 7-8): right + bottom face throne
+  line(px(9), py(7), px(9), py(9));
+  line(px(7), py(9), px(9), py(9));
+
+  // Top-right block (rows 7-8, cols 10-11): left + bottom face throne
+  line(px(10), py(7), px(10), py(9));
+  line(px(10), py(9), px(12), py(9));
+
+  // Bottom-left block (rows 10-11, cols 7-8): right + top face throne
+  line(px(9), py(10), px(9), py(12));
+  line(px(7), py(10), px(9), py(10));
+
+  // Bottom-right block (rows 10-11, cols 10-11): left + top face throne
+  line(px(10), py(10), px(10), py(12));
+  line(px(10), py(10), px(12), py(10));
+}
+
 function drawBoard(ctx: CanvasRenderingContext2D) {
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -57,6 +88,7 @@ function drawBoard(ctx: CanvasRenderingContext2D) {
       ctx.strokeRect(x, y, CELL, CELL);
     }
   }
+  drawWalls(ctx);
 }
 
 export function Board() {
