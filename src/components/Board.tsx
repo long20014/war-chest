@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { GameState, Piece, Cell } from '../game';
-import { initialState, getMoves, getAttacks, applyMove, applyAttack, isPlayable } from '../game';
+import { initialState, getMoves, getAttacks, applyMove, applyAttack, advanceTurn, isPlayable } from '../game';
 
 const SIZE = 19;
 const CELL = 32;
@@ -128,8 +128,10 @@ function drawPieces(ctx: CanvasRenderingContext2D, pieces: Piece[]) {
     ctx.arc(x, y, R, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.strokeStyle = '#374151';
-    ctx.lineWidth = 1;
+    // Unrevealed assassin gets yellow border; all others get dark gray
+    const hidden = p.type === 'AS' && !p.revealed;
+    ctx.strokeStyle = hidden ? '#eab308' : '#374151';
+    ctx.lineWidth = hidden ? 2 : 1;
     ctx.stroke();
 
     ctx.fillStyle = PLAYER_COLOR[p.player];
@@ -158,15 +160,21 @@ export function Board() {
   const [selected, setSelected] = useState<number | null>(null);
   const [validMoves, setValidMoves] = useState<Cell[]>([]);
   const [validAttacks, setValidAttacks] = useState<Cell[]>([]);
+  // Assassin bonus: pieceId waiting to optionally attack after moving
+  const [bonusAttackId, setBonusAttackId] = useState<number | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const sel = state.pieces.find(p => p.id === selected);
+    const sel = state.pieces.find(p => p.id === (selected ?? bonusAttackId));
     drawScene(ctx, state, sel, validMoves, validAttacks);
-  }, [state, selected, validMoves, validAttacks]);
+  }, [state, selected, validMoves, validAttacks, bonusAttackId]);
+
+  const clearSelection = useCallback(() => {
+    setSelected(null); setValidMoves([]); setValidAttacks([]); setBonusAttackId(null);
+  }, []);
 
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (state.winner !== null) return;
@@ -177,38 +185,79 @@ export function Board() {
 
     if (!isPlayable(row, col)) return;
 
-    if (validMoves.some(m => m.row === row && m.col === col)) {
-      setState(prev => applyMove(prev, selected!, row, col));
-      setSelected(null); setValidMoves([]); setValidAttacks([]);
+    // --- Assassin bonus attack phase ---
+    if (bonusAttackId !== null) {
+      if (validAttacks.some(a => a.row === row && a.col === col)) {
+        // Use the attack
+        setState(prev => applyAttack(prev, bonusAttackId, row, col));
+      } else {
+        // Skip bonus attack — advance turn manually
+        setState(prev => advanceTurn(prev));
+      }
+      clearSelection();
       return;
     }
 
+    // --- Normal move destination ---
+    if (validMoves.some(m => m.row === row && m.col === col)) {
+      const piece = state.pieces.find(p => p.id === selected)!;
+      const nextState = applyMove(state, selected!, row, col, piece.type === 'AS');
+
+      if (piece.type === 'AS') {
+        // Enter bonus attack phase: assassin moved, now may optionally attack
+        const movedPiece = nextState.pieces.find(p => p.id === selected)!;
+        const attacks = getAttacks(movedPiece, nextState.pieces);
+        setState(nextState);
+        setSelected(null);
+        setValidMoves([]);
+        if (attacks.length > 0) {
+          setBonusAttackId(selected);
+          setValidAttacks(attacks);
+        } else {
+          // No attacks available — advance turn
+          setState(advanceTurn(nextState));
+          setBonusAttackId(null);
+          setValidAttacks([]);
+        }
+      } else {
+        setState(nextState);
+        clearSelection();
+      }
+      return;
+    }
+
+    // --- Normal range attack ---
     if (validAttacks.some(a => a.row === row && a.col === col)) {
       setState(prev => applyAttack(prev, selected!, row, col));
-      setSelected(null); setValidMoves([]); setValidAttacks([]);
+      clearSelection();
       return;
     }
 
+    // --- Select own piece ---
     const clicked = state.pieces.find(p => p.row === row && p.col === col);
     if (clicked && clicked.player === state.turn) {
       setSelected(clicked.id);
       setValidMoves(getMoves(clicked, state.pieces));
       const isRange = ['AS', 'AR', 'AT', 'MG'].includes(clicked.type);
       setValidAttacks(isRange ? getAttacks(clicked, state.pieces) : []);
+      setBonusAttackId(null);
       return;
     }
 
-    setSelected(null); setValidMoves([]); setValidAttacks([]);
-  }, [state, selected, validMoves, validAttacks]);
+    clearSelection();
+  }, [state, selected, validMoves, validAttacks, bonusAttackId, clearSelection]);
 
   const winnerName = state.winner === 0 ? 'Blue' : 'Red';
   const turnColor = PLAYER_COLOR[state.turn];
+  const inBonusPhase = bonusAttackId !== null;
 
   return (
     <div className="flex flex-col items-center gap-2">
       {state.winner === null && (
         <p className="text-sm font-semibold" style={{ color: turnColor }}>
-          {state.turn === 0 ? 'Blue' : 'Red'}'s turn
+          {inBonusPhase
+            ? 'Assassin: click to attack or click elsewhere to skip'
+            : `${state.turn === 0 ? 'Blue' : 'Red'}'s turn`}
         </p>
       )}
       <div className="relative">

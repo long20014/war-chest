@@ -7,6 +7,7 @@ export interface Piece {
   player: Player;
   row: number;
   col: number;
+  revealed?: boolean; // AS only: undefined/false = hidden, true = revealed
 }
 
 export interface GameState {
@@ -27,6 +28,24 @@ export function isPlayable(r: number, c: number): boolean {
   if (topOrBottom && ((c >= 3 && c <= 5) || (c >= 13 && c <= 15))) return false;
   if (leftOrRight && ((r >= 3 && r <= 5) || (r >= 13 && r <= 15))) return false;
   return true;
+}
+
+// Unrevealed assassins cannot be targeted
+function isTargetable(p: Piece): boolean {
+  return p.type !== 'AS' || !!p.revealed;
+}
+
+// Reveal assassins that are within 2 cells (Chebyshev) of an enemy Guard
+function checkAssassinReveal(pieces: Piece[]): Piece[] {
+  const guards = pieces.filter(p => p.type === 'GA');
+  return pieces.map(p => {
+    if (p.type !== 'AS' || p.revealed) return p;
+    const nearEnemyGuard = guards.some(g =>
+      g.player !== p.player &&
+      Math.max(Math.abs(g.row - p.row), Math.abs(g.col - p.col)) <= 2
+    );
+    return nearEnemyGuard ? { ...p, revealed: true } : p;
+  });
 }
 
 export function initialState(): GameState {
@@ -69,6 +88,12 @@ const DIRS8: Cell[] = [
 const DIRS4: Cell[] = [
   { row: -1, col: 0 }, { row: 1, col: 0 }, { row: 0, col: -1 }, { row: 0, col: 1 },
 ];
+const PERPENDICULARS: Record<string, Cell[]> = {
+  '-1,0': [{ row: 0, col: -1 }, { row: 0, col: 1 }],
+  '1,0':  [{ row: 0, col: -1 }, { row: 0, col: 1 }],
+  '0,1':  [{ row: -1, col: 0 }, { row: 1, col: 0 }],
+  '0,-1': [{ row: -1, col: 0 }, { row: 1, col: 0 }],
+};
 
 export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
   const occupied = new Map(pieces.map(p => [`${p.row},${p.col}`, p]));
@@ -76,7 +101,7 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
   const meleeOk = (r: number, c: number) => {
     if (!isPlayable(r, c)) return false;
     const hit = occupied.get(`${r},${c}`);
-    return !hit || hit.player !== piece.player;
+    return !hit || (hit.player !== piece.player && isTargetable(hit));
   };
 
   const results: Cell[] = [];
@@ -89,7 +114,8 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
       }
       break;
 
-    case 'AS': case 'MG':
+    case 'AS':
+      // Moves to empty cells only (attacks separately)
       for (const d of DIRS8) {
         for (let s = 1; s <= 2; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
@@ -100,20 +126,75 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
       }
       break;
 
-    case 'KN':
-      for (const d of DIRS4) {
-        for (let s = 1; s <= 4; s++) {
+    case 'MG':
+      // 1-2 steps, 8 dirs, can fly over 1 unit
+      for (const d of DIRS8) {
+        let skipped = false;
+        for (let s = 1; s <= 2; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
           if (!isPlayable(r, c)) break;
-          const hit = occupied.get(`${r},${c}`);
-          if (hit) {
-            if (hit.player !== piece.player) results.push({ row: r, col: c });
+          if (occupied.has(`${r},${c}`)) {
+            if (!skipped) { skipped = true; continue; } // fly over one unit
             break;
           }
           results.push({ row: r, col: c });
         }
       }
       break;
+
+    case 'KN': {
+      // Up to 4 steps total, can turn 90° once, can jump over max 2 units
+      const seen = new Set<string>();
+
+      const tryPath = (steps: Cell[]) => {
+        let jumps = 0;
+        let r = piece.row, c = piece.col;
+        for (let i = 0; i < steps.length; i++) {
+          r += steps[i].row;
+          c += steps[i].col;
+          if (!isPlayable(r, c)) return;
+          const isLast = i === steps.length - 1;
+          const hit = occupied.get(`${r},${c}`);
+          if (hit) {
+            if (isLast) {
+              if (hit.player !== piece.player && isTargetable(hit)) {
+                const key = `${r},${c}`;
+                if (!seen.has(key)) { seen.add(key); results.push({ row: r, col: c }); }
+              }
+              return;
+            }
+            jumps++;
+            if (jumps > 2) return;
+          } else if (isLast) {
+            const key = `${r},${c}`;
+            if (!seen.has(key)) { seen.add(key); results.push({ row: r, col: c }); }
+          }
+        }
+      };
+
+      // Straight paths (1-4 steps)
+      for (const d of DIRS4) {
+        for (let len = 1; len <= 4; len++) {
+          tryPath(Array.from({ length: len }, () => d));
+        }
+      }
+
+      // L-shaped paths: a steps in d1, then b steps in perpendicular d2
+      for (const d1 of DIRS4) {
+        const turnDirs = PERPENDICULARS[`${d1.row},${d1.col}`];
+        for (const d2 of turnDirs) {
+          for (let a = 1; a <= 3; a++) {
+            for (let b = 1; b <= 4 - a; b++) {
+              tryPath([
+                ...Array.from({ length: a }, () => d1),
+                ...Array.from({ length: b }, () => d2),
+              ]);
+            }
+          }
+        }
+      }
+      break;
+    }
 
     case 'AT':
       for (const d of DIRS4) {
@@ -126,26 +207,28 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
   return results;
 }
 
+const THRONE_ROW = 9;
+const THRONE_COL = 9;
+
+function onThrone(piece: Piece): boolean {
+  return piece.row === THRONE_ROW && piece.col === THRONE_COL;
+}
+
 export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
   const occupied = new Map(pieces.map(p => [`${p.row},${p.col}`, p]));
   const isEnemy = (r: number, c: number) => {
     const p = occupied.get(`${r},${c}`);
-    return p !== undefined && p.player !== piece.player;
+    return p !== undefined && p.player !== piece.player && isTargetable(p);
   };
 
+  const throne = onThrone(piece);
   const results: Cell[] = [];
 
   switch (piece.type) {
-    case 'AS':
+    case 'AS': {
+      const maxRange = throne ? 2 : 1;
       for (const d of DIRS8) {
-        const r = piece.row + d.row, c = piece.col + d.col;
-        if (isPlayable(r, c) && isEnemy(r, c)) results.push({ row: r, col: c });
-      }
-      break;
-
-    case 'AR':
-      for (const d of DIRS8) {
-        for (let s = 1; s <= 2; s++) {
+        for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
@@ -155,10 +238,12 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
         }
       }
       break;
+    }
 
-    case 'MG':
+    case 'AR': {
+      const maxRange = throne ? 3 : 2;
       for (const d of DIRS8) {
-        for (let s = 1; s <= 3; s++) {
+        for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
@@ -168,12 +253,29 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
         }
       }
       break;
+    }
 
-    case 'AT':
+    case 'MG': {
+      const maxRange = throne ? 4 : 3;
+      for (const d of DIRS8) {
+        for (let s = 1; s <= maxRange; s++) {
+          const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!isPlayable(r, c)) break;
+          if (occupied.has(`${r},${c}`)) {
+            if (isEnemy(r, c)) results.push({ row: r, col: c });
+            break;
+          }
+        }
+      }
+      break;
+    }
+
+    case 'AT': {
+      const maxRange = throne ? 5 : 4;
       for (const d of DIRS4) {
         const r1 = piece.row + d.row, c1 = piece.col + d.col;
         if (!isPlayable(r1, c1) || occupied.has(`${r1},${c1}`)) continue;
-        for (let s = 2; s <= 4; s++) {
+        for (let s = 2; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
@@ -183,21 +285,44 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
         }
       }
       break;
+    }
   }
 
   return results;
 }
 
-export function applyMove(state: GameState, pieceId: number, row: number, col: number): GameState {
+export function advanceTurn(state: GameState): GameState {
+  return { ...state, turn: state.turn === 0 ? 1 : 0 };
+}
+
+export function applyMove(
+  state: GameState,
+  pieceId: number,
+  row: number,
+  col: number,
+  skipTurnAdvance = false,
+): GameState {
   const moving = state.pieces.find(p => p.id === pieceId)!;
   const target = state.pieces.find(p => p.row === row && p.col === col && p.id !== pieceId);
 
-  const pieces = state.pieces
+  // Assassin is revealed when it kills a unit by moving onto it
+  const movedPiece: Piece = {
+    ...moving,
+    row,
+    col,
+    ...(moving.type === 'AS' && target ? { revealed: true } : {}),
+  };
+
+  let pieces = state.pieces
     .filter(p => p.id !== pieceId && p.id !== target?.id)
-    .concat({ ...moving, row, col });
+    .concat(movedPiece);
+
+  pieces = checkAssassinReveal(pieces);
 
   const winner: Player | null = target?.type === 'KI' ? moving.player : null;
-  const turn: Player = winner !== null ? state.turn : (state.turn === 0 ? 1 : 0);
+  const turn: Player = (winner !== null || skipTurnAdvance)
+    ? state.turn
+    : (state.turn === 0 ? 1 : 0);
 
   return { pieces, turn, winner };
 }
@@ -206,7 +331,13 @@ export function applyAttack(state: GameState, pieceId: number, row: number, col:
   const attacker = state.pieces.find(p => p.id === pieceId)!;
   const target = state.pieces.find(p => p.row === row && p.col === col)!;
 
-  const pieces = state.pieces.filter(p => p.id !== target.id);
+  // Assassin is revealed when it attacks
+  let pieces = state.pieces
+    .filter(p => p.id !== target.id)
+    .map(p => p.id === pieceId && p.type === 'AS' ? { ...p, revealed: true } : p);
+
+  pieces = checkAssassinReveal(pieces);
+
   const winner: Player | null = target.type === 'KI' ? attacker.player : null;
   const turn: Player = winner !== null ? state.turn : (state.turn === 0 ? 1 : 0);
 
