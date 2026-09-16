@@ -8,6 +8,10 @@ export interface Piece {
   row: number;
   col: number;
   revealed?: boolean; // AS only: undefined/false = hidden, true = revealed
+  evolved?: boolean;  // true if this piece is an evolved Soldier
+  startRow: number;   // spawn cell, for throne-dwell auto-return
+  startCol: number;
+  throneTurns?: number; // owner-turns spent continuously on the throne
 }
 
 export interface GameState {
@@ -17,6 +21,52 @@ export interface GameState {
 }
 
 export type Cell = { row: number; col: number };
+
+// Orthogonal cell-pairs that a wall sits between. Mirrors drawWalls in Board.tsx.
+const WALL_EDGES: [Cell, Cell][] = [
+  // top-left block
+  [{ row: 7, col: 8 }, { row: 7, col: 9 }], [{ row: 8, col: 8 }, { row: 8, col: 9 }],
+  [{ row: 8, col: 7 }, { row: 9, col: 7 }], [{ row: 8, col: 8 }, { row: 9, col: 8 }],
+  // top-right block
+  [{ row: 7, col: 9 }, { row: 7, col: 10 }], [{ row: 8, col: 9 }, { row: 8, col: 10 }],
+  [{ row: 8, col: 10 }, { row: 9, col: 10 }], [{ row: 8, col: 11 }, { row: 9, col: 11 }],
+  // bottom-left block
+  [{ row: 10, col: 8 }, { row: 10, col: 9 }], [{ row: 11, col: 8 }, { row: 11, col: 9 }],
+  [{ row: 9, col: 7 }, { row: 10, col: 7 }], [{ row: 9, col: 8 }, { row: 10, col: 8 }],
+  // bottom-right block
+  [{ row: 10, col: 9 }, { row: 10, col: 10 }], [{ row: 11, col: 9 }, { row: 11, col: 10 }],
+  [{ row: 9, col: 10 }, { row: 10, col: 10 }], [{ row: 9, col: 11 }, { row: 10, col: 11 }],
+];
+
+function edgeKey(a: Cell, b: Cell): string {
+  const ka = `${a.row},${a.col}`, kb = `${b.row},${b.col}`;
+  return ka < kb ? `${ka}-${kb}` : `${kb}-${ka}`;
+}
+
+const WALLS = new Set(WALL_EDGES.map(([a, b]) => edgeKey(a, b)));
+
+function blockedOrthogonal(a: Cell, b: Cell): boolean {
+  return WALLS.has(edgeKey(a, b));
+}
+
+// A diagonal step is blocked if a wall sits on any of the orthogonal edges
+// meeting at the shared corner (seals diagonal entry to the palace).
+function blockedDiagonal(a: Cell, b: Cell): boolean {
+  const c1: Cell = { row: a.row, col: b.col };
+  const c2: Cell = { row: b.row, col: a.col };
+  return (
+    blockedOrthogonal(a, c1) || blockedOrthogonal(a, c2) ||
+    blockedOrthogonal(b, c1) || blockedOrthogonal(b, c2)
+  );
+}
+
+export function canCross(from: Cell, to: Cell, ignoreWalls: boolean): boolean {
+  if (ignoreWalls) return true;
+  const dr = Math.abs(from.row - to.row), dc = Math.abs(from.col - to.col);
+  if (dr + dc === 1) return !blockedOrthogonal(from, to);
+  if (dr === 1 && dc === 1) return !blockedDiagonal(from, to);
+  return true; // non-adjacent: callers step one cell at a time
+}
 
 const SIZE = 19;
 
@@ -51,7 +101,7 @@ function checkAssassinReveal(pieces: Piece[]): Piece[] {
 export function initialState(): GameState {
   let id = 0;
   const mk = (type: UnitType, player: Player, row: number, col: number): Piece =>
-    ({ id: id++, type, player, row, col });
+    ({ id: id++, type, player, row, col, startRow: row, startCol: col });
 
   const pieces: Piece[] = [
     // Player 0 — bottom
