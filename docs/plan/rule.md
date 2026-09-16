@@ -12,9 +12,9 @@
 
 | Location | Appearance | Effect |
 |----------|-----------|--------|
-| **Warp** | Black cells | When a unit enters, it may teleport to any other warp cell, or stay. |
-| **Wall** | Thick border lines | Units cannot move or attack through a wall. Protects units entering the palace safely. |
-| **Throne** | Gold cell (J-10) | King enters → win. Soldier enters → evolves into any unit (except King). Range unit enters → attack range +1, and can attack outside the wall without restriction. |
+| **Warp** | Black cells | When a unit enters, it may optionally teleport to any other empty warp cell, or stay. |
+| **Wall** | Thick border lines | Units cannot move or attack through a wall (except a range unit on the throne, which ignores walls). Protects units entering the palace safely. |
+| **Throne** | Gold cell (J-10) | King enters empty throne → win. Soldier enters → evolves into any unit (except King), one evolved unit per player at a time. Range unit enters → attack range +1, and can attack outside the wall without restriction. |
 
 ---
 
@@ -38,3 +38,6 @@
 - **Melee** units must move onto the enemy's cell to kill.
 - **Range** units can attack without moving.
 - Units cannot move or attack through a Wall.
+- **Throne dwell:** A non-King unit may occupy the Throne for at most **3 of its owner's turns**. On the owner's next turn it is automatically returned to its starting cell; if that cell is occupied, the unit is removed (killed).
+- **Evolution:** Only one evolved Soldier per player may exist at a time. A Soldier reaching the Throne while an evolved unit already lives stays a Soldier.
+- **King-win:** A King wins by entering the Throne only when it is empty.

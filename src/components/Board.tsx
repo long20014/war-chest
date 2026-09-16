@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { GameState, Piece, Cell } from '../game';
-import { initialState, getMoves, getAttacks, applyMove, applyAttack, advanceTurn, isPlayable } from '../game';
+import { initialState, getMoves, getAttacks, applyMove, applyAttack, advanceTurn, isPlayable, getWarpDestinations, applyWarp, canEvolve, applyEvolution } from '../game';
 
 const SIZE = 19;
 const CELL = 32;
@@ -162,19 +162,42 @@ export function Board() {
   const [validAttacks, setValidAttacks] = useState<Cell[]>([]);
   // Assassin bonus: pieceId waiting to optionally attack after moving
   const [bonusAttackId, setBonusAttackId] = useState<number | null>(null);
+  // Warp phase: pieceId on a warp cell choosing teleport destination
+  const [warpId, setWarpId] = useState<number | null>(null);
+  const [warpDests, setWarpDests] = useState<Cell[]>([]);
+  // Evolution phase: pieceId (Soldier on throne) choosing evolved type
+  const [evolveId, setEvolveId] = useState<number | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const sel = state.pieces.find(p => p.id === (selected ?? bonusAttackId));
-    drawScene(ctx, state, sel, validMoves, validAttacks);
-  }, [state, selected, validMoves, validAttacks, bonusAttackId]);
+    const sel = state.pieces.find(p => p.id === (selected ?? bonusAttackId ?? warpId));
+    drawScene(ctx, state, sel, [...validMoves, ...warpDests], validAttacks);
+  }, [state, selected, validMoves, validAttacks, bonusAttackId, warpDests, warpId, evolveId]);
 
   const clearSelection = useCallback(() => {
     setSelected(null); setValidMoves([]); setValidAttacks([]); setBonusAttackId(null);
+    setWarpId(null); setWarpDests([]); setEvolveId(null);
   }, []);
+
+  const resolvePostMove = useCallback((movedState: GameState, pieceId: number) => {
+    const warps = getWarpDestinations(movedState, pieceId);
+    if (warps.length > 0) {
+      setState(movedState);
+      setWarpId(pieceId);
+      setWarpDests(warps);
+      return;
+    }
+    if (canEvolve(movedState, pieceId)) {
+      setState(movedState);
+      setEvolveId(pieceId);
+      return;
+    }
+    setState(advanceTurn(movedState));
+    clearSelection();
+  }, [clearSelection]);
 
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (state.winner !== null) return;
@@ -198,30 +221,106 @@ export function Board() {
       return;
     }
 
+    // --- Warp phase ---
+    if (warpId !== null) {
+      const piece = state.pieces.find(p => p.id === warpId)!;
+      if (warpDests.some(w => w.row === row && w.col === col)) {
+        // Teleport to clicked warp destination
+        const warped = applyWarp(state, warpId, row, col);
+        if (piece.type === 'AS') {
+          // Assassin: recompute attacks from new position and enter bonus phase
+          const movedPiece = warped.pieces.find(p => p.id === warpId)!;
+          const attacks = getAttacks(movedPiece, warped.pieces);
+          setState(warped);
+          setWarpId(null);
+          setWarpDests([]);
+          if (attacks.length > 0) {
+            setBonusAttackId(warpId);
+            setValidAttacks(attacks);
+          } else {
+            setState(advanceTurn(warped));
+            clearSelection();
+          }
+        } else {
+          // Non-AS: check evolution, then advance
+          setState(canEvolve(warped, warpId) ? warped : advanceTurn(warped));
+          if (canEvolve(warped, warpId)) {
+            setEvolveId(warpId);
+          }
+          setWarpId(null);
+          setWarpDests([]);
+          if (!canEvolve(warped, warpId)) clearSelection();
+        }
+      } else {
+        // Stay: no teleport
+        if (piece.type === 'AS') {
+          // Assassin: compute attacks from current position and enter bonus phase
+          const attacks = getAttacks(piece, state.pieces);
+          setWarpId(null);
+          setWarpDests([]);
+          if (attacks.length > 0) {
+            setBonusAttackId(warpId);
+            setValidAttacks(attacks);
+          } else {
+            setState(advanceTurn(state));
+            clearSelection();
+          }
+        } else {
+          // Non-AS: check evolution, then advance
+          setState(canEvolve(state, warpId) ? state : advanceTurn(state));
+          if (canEvolve(state, warpId)) {
+            setEvolveId(warpId);
+          }
+          setWarpId(null);
+          setWarpDests([]);
+          if (!canEvolve(state, warpId)) clearSelection();
+        }
+      }
+      return;
+    }
+
     // --- Normal move destination ---
     if (validMoves.some(m => m.row === row && m.col === col)) {
       const piece = state.pieces.find(p => p.id === selected)!;
-      const nextState = applyMove(state, selected!, row, col, piece.type === 'AS');
 
-      if (piece.type === 'AS') {
-        // Enter bonus attack phase: assassin moved, now may optionally attack
-        const movedPiece = nextState.pieces.find(p => p.id === selected)!;
-        const attacks = getAttacks(movedPiece, nextState.pieces);
-        setState(nextState);
+      if (piece.type !== 'AS') {
+        // Non-Assassin: move with skipTurnAdvance=true, check winner, then resolve post-move
+        const moved = applyMove(state, selected!, row, col, true);
+        if (moved.winner !== null) {
+          setState(moved);
+          clearSelection();
+          return;
+        }
+        resolvePostMove(moved, selected!);
+        return;
+      }
+
+      // Assassin: move → warp (if any) → bonus attack
+      const moved = applyMove(state, selected!, row, col, true);
+      const warps = getWarpDestinations(moved, selected!);
+      if (warps.length > 0) {
+        // Enter warp phase; bonus attack computed after warp
+        setState(moved);
+        setWarpId(selected);
+        setWarpDests(warps);
         setSelected(null);
         setValidMoves([]);
-        if (attacks.length > 0) {
-          setBonusAttackId(selected);
-          setValidAttacks(attacks);
-        } else {
-          // No attacks available — advance turn
-          setState(advanceTurn(nextState));
-          setBonusAttackId(null);
-          setValidAttacks([]);
-        }
+        return;
+      }
+      // No warp: compute bonus attack from moved square immediately
+      const movedPiece = moved.pieces.find(p => p.id === selected)!;
+      const attacks = getAttacks(movedPiece, moved.pieces);
+      setState(moved);
+      setSelected(null);
+      setValidMoves([]);
+      if (attacks.length > 0) {
+        setBonusAttackId(selected);
+        setValidAttacks(attacks);
       } else {
-        setState(nextState);
-        clearSelection();
+        // No attacks available — advance turn
+        setState(advanceTurn(moved));
+        setBonusAttackId(null);
+        setValidAttacks([]);
       }
       return;
     }
@@ -245,7 +344,7 @@ export function Board() {
     }
 
     clearSelection();
-  }, [state, selected, validMoves, validAttacks, bonusAttackId, clearSelection]);
+  }, [state, selected, validMoves, validAttacks, bonusAttackId, clearSelection, warpId, warpDests, resolvePostMove]);
 
   const winnerName = state.winner === 0 ? 'Blue' : 'Red';
   const turnColor = PLAYER_COLOR[state.turn];
@@ -271,6 +370,23 @@ export function Board() {
         {state.winner !== null && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50">
             <p className="text-white text-3xl font-bold">{winnerName} wins!</p>
+          </div>
+        )}
+        {evolveId !== null && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded p-3 flex flex-wrap gap-2 max-w-[240px]">
+              {(['GA', 'AS', 'KN', 'AR', 'AT', 'MG', 'SD'] as const).map(t => (
+                <button
+                  key={t}
+                  className="border px-2 py-1 text-sm"
+                  onClick={() => {
+                    setState(prev => advanceTurn(applyEvolution(prev, evolveId, t)));
+                    setEvolveId(null);
+                    clearSelection();
+                  }}
+                >{t}</button>
+              ))}
+            </div>
           </div>
         )}
       </div>

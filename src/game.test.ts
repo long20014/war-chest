@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { initialState, canCross, getMoves, getAttacks, applyMove, getWarpDestinations, applyWarp, canEvolve, applyEvolution, advanceTurn, applyAttack } from './game'
+import { initialState, canCross, getMoves, getAttacks, applyMove, getWarpDestinations, applyWarp, canEvolve, applyEvolution, advanceTurn } from './game'
 import type { Piece, GameState } from './game'
 
 function piece(over: Partial<Piece> & { type: Piece['type']; row: number; col: number }): Piece {
