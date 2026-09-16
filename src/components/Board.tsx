@@ -186,6 +186,9 @@ export function Board() {
     const warps = getWarpDestinations(movedState, pieceId);
     if (warps.length > 0) {
       setState(movedState);
+      setSelected(null);
+      setValidMoves([]);
+      setValidAttacks([]);
       setWarpId(pieceId);
       setWarpDests(warps);
       return;
@@ -242,14 +245,12 @@ export function Board() {
             clearSelection();
           }
         } else {
-          // Non-AS: check evolution, then advance
-          setState(canEvolve(warped, warpId) ? warped : advanceTurn(warped));
-          if (canEvolve(warped, warpId)) {
-            setEvolveId(warpId);
-          }
+          // Non-AS: advance turn
+          const warped = applyWarp(state, warpId, row, col);
+          setState(advanceTurn(warped));
           setWarpId(null);
           setWarpDests([]);
-          if (!canEvolve(warped, warpId)) clearSelection();
+          clearSelection();
         }
       } else {
         // Stay: no teleport
@@ -266,14 +267,11 @@ export function Board() {
             clearSelection();
           }
         } else {
-          // Non-AS: check evolution, then advance
-          setState(canEvolve(state, warpId) ? state : advanceTurn(state));
-          if (canEvolve(state, warpId)) {
-            setEvolveId(warpId);
-          }
+          // Non-AS: stay, advance turn
+          setState(advanceTurn(state));
           setWarpId(null);
           setWarpDests([]);
-          if (!canEvolve(state, warpId)) clearSelection();
+          clearSelection();
         }
       }
       return;
@@ -305,6 +303,7 @@ export function Board() {
         setWarpDests(warps);
         setSelected(null);
         setValidMoves([]);
+        setValidAttacks([]);
         return;
       }
       // No warp: compute bonus attack from moved square immediately
