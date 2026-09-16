@@ -130,6 +130,9 @@ export function initialState(): GameState {
   return { pieces, turn: 0, winner: null };
 }
 
+const THRONE_ROW = 9;
+const THRONE_COL = 9;
+
 const DIRS8: Cell[] = [
   { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
   { row:  0, col: -1 },                       { row:  0, col: 1 },
@@ -157,7 +160,19 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
   const results: Cell[] = [];
 
   switch (piece.type) {
-    case 'KI': case 'GA': case 'SD': case 'AR':
+    case 'KI':
+      for (const d of DIRS8) {
+        const r = piece.row + d.row, c = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r, col: c }, false)) continue;
+        if (r === THRONE_ROW && c === THRONE_COL) {
+          if (!occupied.has(`${r},${c}`)) results.push({ row: r, col: c }); // empty throne only
+          continue;
+        }
+        if (meleeOk(r, c)) results.push({ row: r, col: c });
+      }
+      break;
+
+    case 'GA': case 'SD': case 'AR':
       for (const d of DIRS8) {
         const r = piece.row + d.row, c = piece.col + d.col;
         if (!canCross({ row: piece.row, col: piece.col }, { row: r, col: c }, false)) continue;
@@ -265,9 +280,6 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
 
   return results;
 }
-
-const THRONE_ROW = 9;
-const THRONE_COL = 9;
 
 function onThrone(piece: Piece): boolean {
   return piece.row === THRONE_ROW && piece.col === THRONE_COL;
@@ -392,7 +404,11 @@ export function applyMove(
 
   pieces = checkAssassinReveal(pieces);
 
-  const winner: Player | null = target?.type === 'KI' ? moving.player : null;
+  const enteredThrone = moving.type === 'KI' && row === THRONE_ROW && col === THRONE_COL;
+  const winner: Player | null =
+    target?.type === 'KI' ? moving.player
+    : enteredThrone ? moving.player
+    : null;
   const turn: Player = (winner !== null || skipTurnAdvance)
     ? state.turn
     : (state.turn === 0 ? 1 : 0);

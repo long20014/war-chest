@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { initialState, canCross, getMoves, getAttacks } from './game'
-import type { Piece } from './game'
+import { initialState, canCross, getMoves, getAttacks, applyMove } from './game'
+import type { Piece, GameState } from './game'
 
 function piece(over: Partial<Piece> & { type: Piece['type']; row: number; col: number }): Piece {
   return { id: 1, player: 0, revealed: false, startRow: over.row, startCol: over.col, ...over }
@@ -65,5 +65,31 @@ describe('walls block ranged attacks', () => {
     const enemy = piece({ id: 2, type: 'SD', player: 1, row: 8, col: 8, startRow: 8, startCol: 8 })
     const attacks = getAttacks(ar, [ar, enemy])
     expect(attacks).toContainEqual({ row: 8, col: 8 })
+  })
+})
+
+describe('throne-win', () => {
+  it('King wins by moving onto the empty throne', () => {
+    const king = piece({ type: 'KI', row: 9, col: 8 })
+    const state: GameState = { pieces: [king], turn: 0, winner: null }
+    const moves = getMoves(king, state.pieces)
+    expect(moves).toContainEqual({ row: 9, col: 9 })
+    const next = applyMove(state, king.id, 9, 9)
+    expect(next.winner).toBe(0)
+  })
+
+  it('King cannot move onto an occupied throne', () => {
+    const king = piece({ type: 'KI', row: 9, col: 8 })
+    const blocker = piece({ id: 2, type: 'SD', player: 1, row: 9, col: 9, startRow: 9, startCol: 9 })
+    const moves = getMoves(king, [king, blocker])
+    expect(moves).not.toContainEqual({ row: 9, col: 9 })
+  })
+
+  it('King-capture win still works', () => {
+    const king = piece({ type: 'KI', row: 5, col: 5 })
+    const enemyKing = piece({ id: 2, type: 'KI', player: 1, row: 5, col: 6, startRow: 5, startCol: 6 })
+    const state: GameState = { pieces: [king, enemyKing], turn: 0, winner: null }
+    const next = applyMove(state, king.id, 5, 6)
+    expect(next.winner).toBe(0)
   })
 })
