@@ -432,3 +432,24 @@ export function applyAttack(state: GameState, pieceId: number, row: number, col:
 
   return { pieces, turn, winner };
 }
+
+const WARP_CELLS: Cell[] = [
+  { row: 4, col: 4 }, { row: 4, col: 14 }, { row: 14, col: 4 }, { row: 14, col: 14 },
+];
+
+export function getWarpDestinations(state: GameState, pieceId: number): Cell[] {
+  const p = state.pieces.find(x => x.id === pieceId)!;
+  const onWarp = WARP_CELLS.some(w => w.row === p.row && w.col === p.col);
+  if (!onWarp) return [];
+  const occupied = new Set(state.pieces.map(x => `${x.row},${x.col}`));
+  return WARP_CELLS.filter(w =>
+    !(w.row === p.row && w.col === p.col) && !occupied.has(`${w.row},${w.col}`),
+  );
+}
+
+export function applyWarp(state: GameState, pieceId: number, row: number, col: number): GameState {
+  return {
+    ...state,
+    pieces: state.pieces.map(p => (p.id === pieceId ? { ...p, row, col } : p)),
+  };
+}

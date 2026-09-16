@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { initialState, canCross, getMoves, getAttacks, applyMove } from './game'
+import { initialState, canCross, getMoves, getAttacks, applyMove, getWarpDestinations, applyWarp } from './game'
 import type { Piece, GameState } from './game'
 
 function piece(over: Partial<Piece> & { type: Piece['type']; row: number; col: number }): Piece {
@@ -91,5 +91,35 @@ describe('throne-win', () => {
     const state: GameState = { pieces: [king, enemyKing], turn: 0, winner: null }
     const next = applyMove(state, king.id, 5, 6)
     expect(next.winner).toBe(0)
+  })
+})
+
+describe('warp', () => {
+  it('lists empty other warp cells when the piece is on a warp', () => {
+    const p = piece({ type: 'KN', row: 4, col: 4 })
+    const dests = getWarpDestinations({ pieces: [p], turn: 0, winner: null }, p.id)
+    expect(dests).toContainEqual({ row: 4, col: 14 })
+    expect(dests).toContainEqual({ row: 14, col: 4 })
+    expect(dests).toContainEqual({ row: 14, col: 14 })
+    expect(dests).not.toContainEqual({ row: 4, col: 4 })
+  })
+
+  it('excludes occupied warp cells', () => {
+    const p = piece({ type: 'KN', row: 4, col: 4 })
+    const other = piece({ id: 2, type: 'SD', player: 1, row: 4, col: 14, startRow: 4, startCol: 14 })
+    const dests = getWarpDestinations({ pieces: [p, other], turn: 0, winner: null }, p.id)
+    expect(dests).not.toContainEqual({ row: 4, col: 14 })
+  })
+
+  it('returns [] when the piece is not on a warp', () => {
+    const p = piece({ type: 'KN', row: 5, col: 5 })
+    expect(getWarpDestinations({ pieces: [p], turn: 0, winner: null }, p.id)).toEqual([])
+  })
+
+  it('applyWarp relocates the piece', () => {
+    const p = piece({ type: 'KN', row: 4, col: 4 })
+    const next = applyWarp({ pieces: [p], turn: 0, winner: null }, p.id, 14, 14)
+    const moved = next.pieces.find(x => x.id === p.id)!
+    expect([moved.row, moved.col]).toEqual([14, 14])
   })
 })
