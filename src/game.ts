@@ -453,3 +453,17 @@ export function applyWarp(state: GameState, pieceId: number, row: number, col: n
     pieces: state.pieces.map(p => (p.id === pieceId ? { ...p, row, col } : p)),
   };
 }
+
+export function canEvolve(state: GameState, pieceId: number): boolean {
+  const p = state.pieces.find(x => x.id === pieceId)!;
+  if (p.type !== 'SD' || p.row !== THRONE_ROW || p.col !== THRONE_COL) return false;
+  const hasEvolved = state.pieces.some(x => x.player === p.player && x.evolved);
+  return !hasEvolved;
+}
+
+export function applyEvolution(state: GameState, pieceId: number, type: UnitType): GameState {
+  return {
+    ...state,
+    pieces: state.pieces.map(p => (p.id === pieceId ? { ...p, type, evolved: true } : p)),
+  };
+}

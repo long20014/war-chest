@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { initialState, canCross, getMoves, getAttacks, applyMove, getWarpDestinations, applyWarp } from './game'
+import { initialState, canCross, getMoves, getAttacks, applyMove, getWarpDestinations, applyWarp, canEvolve, applyEvolution } from './game'
 import type { Piece, GameState } from './game'
 
 function piece(over: Partial<Piece> & { type: Piece['type']; row: number; col: number }): Piece {
@@ -121,5 +121,31 @@ describe('warp', () => {
     const next = applyWarp({ pieces: [p], turn: 0, winner: null }, p.id, 14, 14)
     const moved = next.pieces.find(x => x.id === p.id)!
     expect([moved.row, moved.col]).toEqual([14, 14])
+  })
+})
+
+describe('evolution', () => {
+  it('a Soldier on the throne can evolve when no evolved unit lives', () => {
+    const sd = piece({ type: 'SD', row: 9, col: 9 })
+    expect(canEvolve({ pieces: [sd], turn: 0, winner: null }, sd.id)).toBe(true)
+  })
+
+  it('a Soldier cannot evolve while an evolved unit already lives', () => {
+    const sd = piece({ type: 'SD', row: 9, col: 9 })
+    const already = piece({ id: 2, type: 'MG', player: 0, row: 5, col: 5, startRow: 5, startCol: 5, evolved: true })
+    expect(canEvolve({ pieces: [sd, already], turn: 0, winner: null }, sd.id)).toBe(false)
+  })
+
+  it('a Soldier not on the throne cannot evolve', () => {
+    const sd = piece({ type: 'SD', row: 8, col: 9 })
+    expect(canEvolve({ pieces: [sd], turn: 0, winner: null }, sd.id)).toBe(false)
+  })
+
+  it('applyEvolution changes type and marks evolved', () => {
+    const sd = piece({ type: 'SD', row: 9, col: 9 })
+    const next = applyEvolution({ pieces: [sd], turn: 0, winner: null }, sd.id, 'MG')
+    const evolved = next.pieces.find(x => x.id === sd.id)!
+    expect(evolved.type).toBe('MG')
+    expect(evolved.evolved).toBe(true)
   })
 })
