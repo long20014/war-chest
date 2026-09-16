@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { initialState, canCross, getMoves, getAttacks, applyMove, getWarpDestinations, applyWarp, canEvolve, applyEvolution } from './game'
+import { initialState, canCross, getMoves, getAttacks, applyMove, getWarpDestinations, applyWarp, canEvolve, applyEvolution, advanceTurn, applyAttack } from './game'
 import type { Piece, GameState } from './game'
 
 function piece(over: Partial<Piece> & { type: Piece['type']; row: number; col: number }): Piece {
@@ -147,5 +147,53 @@ describe('evolution', () => {
     const evolved = next.pieces.find(x => x.id === sd.id)!
     expect(evolved.type).toBe('MG')
     expect(evolved.evolved).toBe(true)
+  })
+})
+
+describe('throne dwell limit', () => {
+  it('a non-King unit is ejected to its start after 3 owner-turns on the throne', () => {
+    // AR on throne, its start cell (17,6) is free. Player 0 owns it.
+    let state: GameState = {
+      pieces: [piece({ type: 'AR', row: 9, col: 9, startRow: 17, startCol: 6 })],
+      turn: 0, winner: null,
+    }
+    // Simulate owner turns beginning: advanceTurn hands the turn to a player and
+    // runs the timer for that player. Bring the turn back to player 0 four times.
+    // start on player 1's turn so the first advance hands it to player 0
+    state = { ...state, turn: 1 }
+    state = advanceTurn(state) // -> player 0, counter 1
+    let ar = state.pieces[0]; expect(ar.throneTurns).toBe(1)
+    state = advanceTurn(state) // -> player 1
+    state = advanceTurn(state) // -> player 0, counter 2
+    expect(state.pieces[0].throneTurns).toBe(2)
+    state = advanceTurn(state); state = advanceTurn(state) // -> player 0, counter 3
+    expect(state.pieces[0].throneTurns).toBe(3)
+    state = advanceTurn(state); state = advanceTurn(state) // -> player 0, would be 4 -> eject
+    ar = state.pieces[0]
+    expect([ar.row, ar.col]).toEqual([17, 6])
+    expect(ar.throneTurns).toBe(0)
+  })
+
+  it('the unit dies when its start cell is occupied at eject time', () => {
+    let state: GameState = {
+      pieces: [
+        piece({ type: 'AR', row: 9, col: 9, startRow: 17, startCol: 6 }),
+        piece({ id: 2, type: 'SD', player: 0, row: 17, col: 6, startRow: 17, startCol: 6 }),
+      ],
+      turn: 1, winner: null,
+    }
+    for (let i = 0; i < 8; i++) state = advanceTurn(state) // cycle past the limit
+    expect(state.pieces.find(p => p.id === 1)).toBeUndefined() // AR removed
+  })
+
+  it('the counter resets when the unit leaves the throne', () => {
+    let state: GameState = {
+      pieces: [piece({ type: 'AR', row: 9, col: 9, startRow: 17, startCol: 6, throneTurns: 2 })],
+      turn: 1, winner: null,
+    }
+    // move it off the throne, then advance to player 0
+    state = { ...state, pieces: [{ ...state.pieces[0], row: 9, col: 8 }] }
+    state = advanceTurn(state) // -> player 0, off throne
+    expect(state.pieces[0].throneTurns).toBe(0)
   })
 })

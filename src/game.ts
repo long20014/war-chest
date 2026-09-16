@@ -376,8 +376,32 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
   return results;
 }
 
+export function resolveThroneTimer(state: GameState): GameState {
+  const player = state.turn; // the player about to move
+  // increment for that player's non-King pieces on the throne; reset the rest
+  const ticked = state.pieces.map(p => {
+    if (p.player !== player || p.type === 'KI') return p;
+    const onThroneCell = p.row === THRONE_ROW && p.col === THRONE_COL;
+    if (!onThroneCell) return p.throneTurns ? { ...p, throneTurns: 0 } : p;
+    return { ...p, throneTurns: (p.throneTurns ?? 0) + 1 };
+  });
+  // eject or kill any that exceeded 3
+  const result: Piece[] = [];
+  for (const p of ticked) {
+    const expired =
+      p.player === player && p.type !== 'KI' &&
+      p.row === THRONE_ROW && p.col === THRONE_COL && (p.throneTurns ?? 0) > 3;
+    if (!expired) { result.push(p); continue; }
+    const startOccupied = ticked.some(o => o.id !== p.id && o.row === p.startRow && o.col === p.startCol);
+    if (startOccupied) continue; // dies
+    result.push({ ...p, row: p.startRow, col: p.startCol, throneTurns: 0 });
+  }
+  return { ...state, pieces: result };
+}
+
 export function advanceTurn(state: GameState): GameState {
-  return { ...state, turn: state.turn === 0 ? 1 : 0 };
+  const flipped: GameState = { ...state, turn: state.turn === 0 ? 1 : 0 };
+  return resolveThroneTimer(flipped);
 }
 
 export function applyMove(
@@ -409,11 +433,9 @@ export function applyMove(
     target?.type === 'KI' ? moving.player
     : enteredThrone ? moving.player
     : null;
-  const turn: Player = (winner !== null || skipTurnAdvance)
-    ? state.turn
-    : (state.turn === 0 ? 1 : 0);
-
-  return { pieces, turn, winner };
+  const base: GameState = { pieces, turn: state.turn, winner };
+  if (winner !== null || skipTurnAdvance) return base;
+  return advanceTurn(base);
 }
 
 export function applyAttack(state: GameState, pieceId: number, row: number, col: number): GameState {
@@ -428,9 +450,9 @@ export function applyAttack(state: GameState, pieceId: number, row: number, col:
   pieces = checkAssassinReveal(pieces);
 
   const winner: Player | null = target.type === 'KI' ? attacker.player : null;
-  const turn: Player = winner !== null ? state.turn : (state.turn === 0 ? 1 : 0);
-
-  return { pieces, turn, winner };
+  const base: GameState = { pieces, turn: state.turn, winner };
+  if (winner !== null) return base;
+  return advanceTurn(base);
 }
 
 const WARP_CELLS: Cell[] = [
