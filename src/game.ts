@@ -160,6 +160,7 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
     case 'KI': case 'GA': case 'SD': case 'AR':
       for (const d of DIRS8) {
         const r = piece.row + d.row, c = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r, col: c }, false)) continue;
         if (meleeOk(r, c)) results.push({ row: r, col: c });
       }
       break;
@@ -167,11 +168,14 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
     case 'AS':
       // Moves to empty cells only (attacks separately)
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= 2; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, false)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) break;
           results.push({ row: r, col: c });
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -180,14 +184,17 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
       // 1-2 steps, 8 dirs, can fly over 1 unit
       for (const d of DIRS8) {
         let skipped = false;
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= 2; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, false)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
-            if (!skipped) { skipped = true; continue; } // fly over one unit
+            if (!skipped) { skipped = true; prev = { row: r, col: c }; continue; } // fly over one unit
             break;
           }
           results.push({ row: r, col: c });
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -202,6 +209,7 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
         for (let i = 0; i < steps.length; i++) {
           r += steps[i].row;
           c += steps[i].col;
+          if (!canCross({ row: r - steps[i].row, col: c - steps[i].col }, { row: r, col: c }, false)) return;
           if (!isPlayable(r, c)) return;
           const isLast = i === steps.length - 1;
           const hit = occupied.get(`${r},${c}`);
@@ -249,6 +257,7 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
     case 'AT':
       for (const d of DIRS4) {
         const r = piece.row + d.row, c = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r, col: c }, false)) continue;
         if (empty(r, c)) results.push({ row: r, col: c });
       }
       break;
@@ -272,19 +281,23 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
   };
 
   const throne = onThrone(piece);
+  const ignoreWalls = onThrone(piece);
   const results: Cell[] = [];
 
   switch (piece.type) {
     case 'AS': {
       const maxRange = throne ? 2 : 1;
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -293,13 +306,16 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
     case 'AR': {
       const maxRange = throne ? 3 : 2;
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -308,13 +324,16 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
     case 'MG': {
       const maxRange = throne ? 4 : 3;
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -324,14 +343,18 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
       const maxRange = throne ? 5 : 4;
       for (const d of DIRS4) {
         const r1 = piece.row + d.row, c1 = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r1, col: c1 }, ignoreWalls)) continue;
         if (!isPlayable(r1, c1) || occupied.has(`${r1},${c1}`)) continue;
+        let prev = { row: r1, col: c1 };
         for (let s = 2; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
