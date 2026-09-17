@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { GameState, Piece, Cell } from '../game';
 import { initialState, getMoves, getAttacks, applyMove, applyAttack, advanceTurn, isPlayable, getWarpDestinations, applyWarp, canEvolve, applyEvolution } from '../game';
+import { chooseAction } from '../ai/ai';
 
 const SIZE = 19;
 const CELL = 32;
@@ -182,6 +183,19 @@ export function Board() {
     setWarpId(null); setWarpDests([]); setEvolveId(null);
   }, []);
 
+  const AI_PLAYER = 1; // Red is the AI
+  useEffect(() => {
+    if (state.winner !== null || state.turn !== AI_PLAYER) return;
+    // Defensive: never run mid human-interaction phase (those keep turn === 0 anyway).
+    if (bonusAttackId !== null || warpId !== null || evolveId !== null) return;
+    const timer = setTimeout(() => {
+      const action = chooseAction(state, AI_PLAYER);
+      if (action) setState(action.next);
+      clearSelection();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [state, clearSelection, bonusAttackId, warpId, evolveId]);
+
   const resolvePostMove = useCallback((movedState: GameState, pieceId: number) => {
     const warps = getWarpDestinations(movedState, pieceId);
     if (warps.length > 0) {
@@ -355,7 +369,9 @@ export function Board() {
         <p className="text-sm font-semibold" style={{ color: turnColor }}>
           {inBonusPhase
             ? 'Assassin: click to attack or click elsewhere to skip'
-            : `${state.turn === 0 ? 'Blue' : 'Red'}'s turn`}
+            : state.turn === 1
+            ? 'Red is thinking...'
+            : 'Blue\'s turn'}
         </p>
       )}
       <div className="relative">
