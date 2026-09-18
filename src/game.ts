@@ -8,6 +8,10 @@ export interface Piece {
   row: number;
   col: number;
   revealed?: boolean; // AS only: undefined/false = hidden, true = revealed
+  evolved?: boolean;  // true if this piece is an evolved Soldier
+  startRow: number;   // spawn cell, for throne-dwell auto-return
+  startCol: number;
+  throneTurns?: number; // owner-turns spent continuously on the throne
 }
 
 export interface GameState {
@@ -17,6 +21,52 @@ export interface GameState {
 }
 
 export type Cell = { row: number; col: number };
+
+// Orthogonal cell-pairs that a wall sits between. Mirrors drawWalls in Board.tsx.
+const WALL_EDGES: [Cell, Cell][] = [
+  // top-left block
+  [{ row: 7, col: 8 }, { row: 7, col: 9 }], [{ row: 8, col: 8 }, { row: 8, col: 9 }],
+  [{ row: 8, col: 7 }, { row: 9, col: 7 }], [{ row: 8, col: 8 }, { row: 9, col: 8 }],
+  // top-right block
+  [{ row: 7, col: 9 }, { row: 7, col: 10 }], [{ row: 8, col: 9 }, { row: 8, col: 10 }],
+  [{ row: 8, col: 10 }, { row: 9, col: 10 }], [{ row: 8, col: 11 }, { row: 9, col: 11 }],
+  // bottom-left block
+  [{ row: 10, col: 8 }, { row: 10, col: 9 }], [{ row: 11, col: 8 }, { row: 11, col: 9 }],
+  [{ row: 9, col: 7 }, { row: 10, col: 7 }], [{ row: 9, col: 8 }, { row: 10, col: 8 }],
+  // bottom-right block
+  [{ row: 10, col: 9 }, { row: 10, col: 10 }], [{ row: 11, col: 9 }, { row: 11, col: 10 }],
+  [{ row: 9, col: 10 }, { row: 10, col: 10 }], [{ row: 9, col: 11 }, { row: 10, col: 11 }],
+];
+
+function edgeKey(a: Cell, b: Cell): string {
+  const ka = `${a.row},${a.col}`, kb = `${b.row},${b.col}`;
+  return ka < kb ? `${ka}-${kb}` : `${kb}-${ka}`;
+}
+
+const WALLS = new Set(WALL_EDGES.map(([a, b]) => edgeKey(a, b)));
+
+function blockedOrthogonal(a: Cell, b: Cell): boolean {
+  return WALLS.has(edgeKey(a, b));
+}
+
+// A diagonal step is blocked if a wall sits on any of the orthogonal edges
+// meeting at the shared corner (seals diagonal entry to the palace).
+function blockedDiagonal(a: Cell, b: Cell): boolean {
+  const c1: Cell = { row: a.row, col: b.col };
+  const c2: Cell = { row: b.row, col: a.col };
+  return (
+    blockedOrthogonal(a, c1) || blockedOrthogonal(a, c2) ||
+    blockedOrthogonal(b, c1) || blockedOrthogonal(b, c2)
+  );
+}
+
+export function canCross(from: Cell, to: Cell, ignoreWalls: boolean): boolean {
+  if (ignoreWalls) return true;
+  const dr = Math.abs(from.row - to.row), dc = Math.abs(from.col - to.col);
+  if (dr + dc === 1) return !blockedOrthogonal(from, to);
+  if (dr === 1 && dc === 1) return !blockedDiagonal(from, to);
+  return true; // non-adjacent: callers step one cell at a time
+}
 
 const SIZE = 19;
 
@@ -51,7 +101,7 @@ function checkAssassinReveal(pieces: Piece[]): Piece[] {
 export function initialState(): GameState {
   let id = 0;
   const mk = (type: UnitType, player: Player, row: number, col: number): Piece =>
-    ({ id: id++, type, player, row, col });
+    ({ id: id++, type, player, row, col, startRow: row, startCol: col });
 
   const pieces: Piece[] = [
     // Player 0 — bottom
@@ -80,6 +130,9 @@ export function initialState(): GameState {
   return { pieces, turn: 0, winner: null };
 }
 
+const THRONE_ROW = 9;
+const THRONE_COL = 9;
+
 const DIRS8: Cell[] = [
   { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
   { row:  0, col: -1 },                       { row:  0, col: 1 },
@@ -107,9 +160,22 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
   const results: Cell[] = [];
 
   switch (piece.type) {
-    case 'KI': case 'GA': case 'SD': case 'AR':
+    case 'KI':
       for (const d of DIRS8) {
         const r = piece.row + d.row, c = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r, col: c }, false)) continue;
+        if (r === THRONE_ROW && c === THRONE_COL) {
+          if (!occupied.has(`${r},${c}`)) results.push({ row: r, col: c }); // empty throne only
+          continue;
+        }
+        if (meleeOk(r, c)) results.push({ row: r, col: c });
+      }
+      break;
+
+    case 'GA': case 'SD': case 'AR':
+      for (const d of DIRS8) {
+        const r = piece.row + d.row, c = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r, col: c }, false)) continue;
         if (meleeOk(r, c)) results.push({ row: r, col: c });
       }
       break;
@@ -117,11 +183,14 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
     case 'AS':
       // Moves to empty cells only (attacks separately)
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= 2; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, false)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) break;
           results.push({ row: r, col: c });
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -130,14 +199,17 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
       // 1-2 steps, 8 dirs, can fly over 1 unit
       for (const d of DIRS8) {
         let skipped = false;
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= 2; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, false)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
-            if (!skipped) { skipped = true; continue; } // fly over one unit
+            if (!skipped) { skipped = true; prev = { row: r, col: c }; continue; } // fly over one unit
             break;
           }
           results.push({ row: r, col: c });
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -152,6 +224,7 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
         for (let i = 0; i < steps.length; i++) {
           r += steps[i].row;
           c += steps[i].col;
+          if (!canCross({ row: r - steps[i].row, col: c - steps[i].col }, { row: r, col: c }, false)) return;
           if (!isPlayable(r, c)) return;
           const isLast = i === steps.length - 1;
           const hit = occupied.get(`${r},${c}`);
@@ -199,6 +272,7 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
     case 'AT':
       for (const d of DIRS4) {
         const r = piece.row + d.row, c = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r, col: c }, false)) continue;
         if (empty(r, c)) results.push({ row: r, col: c });
       }
       break;
@@ -206,9 +280,6 @@ export function getMoves(piece: Piece, pieces: Piece[]): Cell[] {
 
   return results;
 }
-
-const THRONE_ROW = 9;
-const THRONE_COL = 9;
 
 function onThrone(piece: Piece): boolean {
   return piece.row === THRONE_ROW && piece.col === THRONE_COL;
@@ -222,19 +293,23 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
   };
 
   const throne = onThrone(piece);
+  const ignoreWalls = onThrone(piece);
   const results: Cell[] = [];
 
   switch (piece.type) {
     case 'AS': {
       const maxRange = throne ? 2 : 1;
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -243,13 +318,16 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
     case 'AR': {
       const maxRange = throne ? 3 : 2;
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -258,13 +336,16 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
     case 'MG': {
       const maxRange = throne ? 4 : 3;
       for (const d of DIRS8) {
+        let prev = { row: piece.row, col: piece.col };
         for (let s = 1; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -274,14 +355,18 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
       const maxRange = throne ? 5 : 4;
       for (const d of DIRS4) {
         const r1 = piece.row + d.row, c1 = piece.col + d.col;
+        if (!canCross({ row: piece.row, col: piece.col }, { row: r1, col: c1 }, ignoreWalls)) continue;
         if (!isPlayable(r1, c1) || occupied.has(`${r1},${c1}`)) continue;
+        let prev = { row: r1, col: c1 };
         for (let s = 2; s <= maxRange; s++) {
           const r = piece.row + d.row * s, c = piece.col + d.col * s;
+          if (!canCross(prev, { row: r, col: c }, ignoreWalls)) break;
           if (!isPlayable(r, c)) break;
           if (occupied.has(`${r},${c}`)) {
             if (isEnemy(r, c)) results.push({ row: r, col: c });
             break;
           }
+          prev = { row: r, col: c };
         }
       }
       break;
@@ -291,8 +376,32 @@ export function getAttacks(piece: Piece, pieces: Piece[]): Cell[] {
   return results;
 }
 
+export function resolveThroneTimer(state: GameState): GameState {
+  const player = state.turn; // the player about to move
+  // increment for that player's non-King pieces on the throne; reset the rest
+  const ticked = state.pieces.map(p => {
+    if (p.player !== player || p.type === 'KI') return p;
+    const onThroneCell = p.row === THRONE_ROW && p.col === THRONE_COL;
+    if (!onThroneCell) return p.throneTurns ? { ...p, throneTurns: 0 } : p;
+    return { ...p, throneTurns: (p.throneTurns ?? 0) + 1 };
+  });
+  // eject or kill any that exceeded 3
+  const result: Piece[] = [];
+  for (const p of ticked) {
+    const expired =
+      p.player === player && p.type !== 'KI' &&
+      p.row === THRONE_ROW && p.col === THRONE_COL && (p.throneTurns ?? 0) > 3;
+    if (!expired) { result.push(p); continue; }
+    const startOccupied = ticked.some(o => o.id !== p.id && o.row === p.startRow && o.col === p.startCol);
+    if (startOccupied) continue; // dies
+    result.push({ ...p, row: p.startRow, col: p.startCol, throneTurns: 0 });
+  }
+  return { ...state, pieces: result };
+}
+
 export function advanceTurn(state: GameState): GameState {
-  return { ...state, turn: state.turn === 0 ? 1 : 0 };
+  const flipped: GameState = { ...state, turn: state.turn === 0 ? 1 : 0 };
+  return resolveThroneTimer(flipped);
 }
 
 export function applyMove(
@@ -319,12 +428,14 @@ export function applyMove(
 
   pieces = checkAssassinReveal(pieces);
 
-  const winner: Player | null = target?.type === 'KI' ? moving.player : null;
-  const turn: Player = (winner !== null || skipTurnAdvance)
-    ? state.turn
-    : (state.turn === 0 ? 1 : 0);
-
-  return { pieces, turn, winner };
+  const enteredThrone = moving.type === 'KI' && row === THRONE_ROW && col === THRONE_COL;
+  const winner: Player | null =
+    target?.type === 'KI' ? moving.player
+    : enteredThrone ? moving.player
+    : null;
+  const base: GameState = { pieces, turn: state.turn, winner };
+  if (winner !== null || skipTurnAdvance) return base;
+  return advanceTurn(base);
 }
 
 export function applyAttack(state: GameState, pieceId: number, row: number, col: number): GameState {
@@ -339,7 +450,42 @@ export function applyAttack(state: GameState, pieceId: number, row: number, col:
   pieces = checkAssassinReveal(pieces);
 
   const winner: Player | null = target.type === 'KI' ? attacker.player : null;
-  const turn: Player = winner !== null ? state.turn : (state.turn === 0 ? 1 : 0);
+  const base: GameState = { pieces, turn: state.turn, winner };
+  if (winner !== null) return base;
+  return advanceTurn(base);
+}
 
-  return { pieces, turn, winner };
+const WARP_CELLS: Cell[] = [
+  { row: 4, col: 4 }, { row: 4, col: 14 }, { row: 14, col: 4 }, { row: 14, col: 14 },
+];
+
+export function getWarpDestinations(state: GameState, pieceId: number): Cell[] {
+  const p = state.pieces.find(x => x.id === pieceId)!;
+  const onWarp = WARP_CELLS.some(w => w.row === p.row && w.col === p.col);
+  if (!onWarp) return [];
+  const occupied = new Set(state.pieces.map(x => `${x.row},${x.col}`));
+  return WARP_CELLS.filter(w =>
+    !(w.row === p.row && w.col === p.col) && !occupied.has(`${w.row},${w.col}`),
+  );
+}
+
+export function applyWarp(state: GameState, pieceId: number, row: number, col: number): GameState {
+  return {
+    ...state,
+    pieces: state.pieces.map(p => (p.id === pieceId ? { ...p, row, col } : p)),
+  };
+}
+
+export function canEvolve(state: GameState, pieceId: number): boolean {
+  const p = state.pieces.find(x => x.id === pieceId)!;
+  if (p.type !== 'SD' || p.row !== THRONE_ROW || p.col !== THRONE_COL) return false;
+  const hasEvolved = state.pieces.some(x => x.player === p.player && x.evolved);
+  return !hasEvolved;
+}
+
+export function applyEvolution(state: GameState, pieceId: number, type: UnitType): GameState {
+  return {
+    ...state,
+    pieces: state.pieces.map(p => (p.id === pieceId ? { ...p, type, evolved: true } : p)),
+  };
 }
